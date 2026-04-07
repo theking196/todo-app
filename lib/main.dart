@@ -1,14 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'dart:convert';
 
 void main() {
-  runApp(const TodoApp());
+  runApp(const MyApp());
 }
 
-class TodoApp extends StatelessWidget {
-  const TodoApp({super.key});
+class MyApp extends StatelessWidget {
+  const MyApp({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -21,7 +20,7 @@ class TodoApp extends StatelessWidget {
           colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
           useMaterial3: true,
         ),
-        home: const HomePage(),
+        home: const TodoScreen(),
       ),
     );
   }
@@ -35,46 +34,52 @@ class Todo {
   Todo({required this.id, required this.title, this.isCompleted = false});
 
   Map<String, dynamic> toJson() => {
-    'id': id,
-    'title': title,
-    'isCompleted': isCompleted,
-  };
+        'id': id,
+        'title': title,
+        'isCompleted': isCompleted,
+      };
 
   factory Todo.fromJson(Map<String, dynamic> json) => Todo(
-    id: json['id'],
-    title: json['title'],
-    isCompleted: json['isCompleted'] ?? false,
-  );
+        id: json['id'],
+        title: json['title'],
+        isCompleted: json['isCompleted'] ?? false,
+      );
 }
 
 class TodoProvider extends ChangeNotifier {
   List<Todo> _todos = [];
-  
   List<Todo> get todos => _todos;
+
+  static const String _storageKey = 'todos';
 
   Future<void> loadTasks() async {
     final prefs = await SharedPreferences.getInstance();
-    final data = prefs.getString('todos');
-    if (data != null) {
-      final List<dynamic> jsonList = jsonDecode(data);
-      _todos = jsonList.map((e) => Todo.fromJson(e)).toList();
-      notifyListeners();
-    }
+    final List<String> taskStrings = prefs.getStringList(_storageKey) ?? [];
+    _todos = taskStrings.map((s) {
+      final Map<String, dynamic> json = Map<String, dynamic>.from(
+        Uri.splitQueryString(s),
+      );
+      return Todo.fromJson(json);
+    }).toList();
+    notifyListeners();
   }
 
   Future<void> _saveTasks() async {
     final prefs = await SharedPreferences.getInstance();
-    final data = jsonEncode(_todos.map((e) => e.toJson()).toList());
-    await prefs.setString('todos', data);
+    final List<String> taskStrings = _todos.map((t) {
+      return Uri(queryParameters: t.toJson()).query;
+    }).toList();
+    await prefs.setStringList(_storageKey, taskStrings);
   }
 
-  void addTodo(String title) {
-    _todos.add(Todo(id: DateTime.now().millisecondsSinceEpoch.toString(), title: title));
+  void addTask(String title) {
+    final todo = Todo(id: DateTime.now().millisecondsSinceEpoch.toString(), title: title);
+    _todos.add(todo);
     _saveTasks();
     notifyListeners();
   }
 
-  void toggleComplete(String id) {
+  void toggleTask(String id) {
     final index = _todos.indexWhere((t) => t.id == id);
     if (index != -1) {
       _todos[index].isCompleted = !_todos[index].isCompleted;
@@ -83,77 +88,111 @@ class TodoProvider extends ChangeNotifier {
     }
   }
 
-  void deleteTodo(String id) {
+  void deleteTask(String id) {
     _todos.removeWhere((t) => t.id == id);
     _saveTasks();
     notifyListeners();
   }
 }
 
-class HomePage extends StatelessWidget {
-  const HomePage({super.key});
+class TodoScreen extends StatelessWidget {
+  const TodoScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
+    final todos = context.watch<TodoProvider>().todos;
+    final pending = todos.where((t) => !t.isCompleted).length;
+    final completed = todos.where((t) => t.isCompleted).length;
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('My Tasks'),
-        centerTitle: true,
+        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
+        actions: [
+          Padding(
+            padding: const EdgeInsets.only(right: 16),
+            child: Center(
+              child: Text(
+                '$pending pending, $completed done',
+                style: const TextStyle(fontSize: 12),
+              ),
+            ),
+          ),
+        ],
       ),
-      body: Consumer<TodoProvider>(
-        builder: (context, provider, _) {
-          if (provider.todos.isEmpty) {
-            return const Center(
+      body: todos.isEmpty
+          ? const Center(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(Icons.task_alt, size: 80, color: Colors.grey),
+                  Icon(Icons.task_alt, size: 64, color: Colors.grey),
                   SizedBox(height: 16),
-                  Text('No tasks yet!', style: TextStyle(fontSize: 18, color: Colors.grey)),
-                  Text('Tap + to add one', style: TextStyle(fontSize: 14, color: Colors.grey)),
+                  Text(
+                    'No tasks yet!',
+                    style: TextStyle(fontSize: 18, color: Colors.grey),
+                  ),
+                  SizedBox(height: 8),
+                  Text(
+                    'Tap + to add a task',
+                    style: TextStyle(color: Colors.grey),
+                  ),
                 ],
               ),
-            );
-          }
-          return ListView.builder(
-            itemCount: provider.todos.length,
-            itemBuilder: (context, index) {
-              final todo = provider.todos[index];
-              return Dismissible(
-                key: Key(todo.id),
-                direction: DismissDirection.endToStart,
-                background: Container(
-                  color: Colors.red,
-                  alignment: Alignment.centerRight,
-                  padding: const EdgeInsets.only(right: 20),
-                  child: const Icon(Icons.delete, color: Colors.white),
-                ),
-                onDismissed: (_) => provider.deleteTodo(todo.id),
-                child: Card(
-                  margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                  child: ListTile(
-                    leading: Checkbox(
+            )
+          : ListView.builder(
+              itemCount: todos.length,
+              itemBuilder: (context, index) {
+                final todo = todos[index];
+                return Dismissible(
+                  key: Key(todo.id),
+                  background: Container(
+                    color: Colors.red,
+                    alignment: Alignment.centerRight,
+                    padding: const EdgeInsets.only(right: 16),
+                    child: const Icon(Icons.delete, color: Colors.white),
+                  ),
+                  direction: DismissDirection.endToStart,
+                  onDismissed: (_) {
+                    context.read<TodoProvider>().deleteTask(todo.id);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('"${todo.title}" deleted'),
+                        action: SnackBarAction(
+                          label: 'Undo',
+                          onPressed: () {
+                            context.read<TodoProvider>().addTask(todo.title);
+                          },
+                        ),
+                      ),
+                    );
+                  },
+                  child: Card(
+                    margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    child: CheckboxListTile(
                       value: todo.isCompleted,
-                      onChanged: (_) => provider.toggleComplete(todo.id),
-                    ),
-                    title: Text(
-                      todo.title,
-                      style: TextStyle(
-                        decoration: todo.isCompleted ? TextDecoration.lineThrough : null,
-                        color: todo.isCompleted ? Colors.grey : null,
+                      onChanged: (_) {
+                        context.read<TodoProvider>().toggleTask(todo.id);
+                      },
+                      title: Text(
+                        todo.title,
+                        style: TextStyle(
+                          decoration: todo.isCompleted
+                              ? TextDecoration.lineThrough
+                              : null,
+                          color: todo.isCompleted ? Colors.grey : null,
+                        ),
+                      ),
+                      secondary: Icon(
+                        todo.isCompleted
+                            ? Icons.check_circle
+                            : Icons.radio_button_unchecked,
+                        color: todo.isCompleted ? Colors.green : Colors.grey,
                       ),
                     ),
-                    trailing: IconButton(
-                      icon: const Icon(Icons.delete_outline, color: Colors.red),
-                      onPressed: () => provider.deleteTodo(todo.id),
-                    ),
                   ),
-                ),
-              );
-            },
-          );
-        },
-      ),
+                );
+              },
+            ),
       floatingActionButton: FloatingActionButton(
         onPressed: () => _showAddDialog(context),
         child: const Icon(Icons.add),
@@ -171,26 +210,26 @@ class HomePage extends StatelessWidget {
           controller: controller,
           autofocus: true,
           decoration: const InputDecoration(
-            hintText: 'Enter task name',
+            hintText: 'What needs to be done?',
             border: OutlineInputBorder(),
           ),
           onSubmitted: (value) {
             if (value.trim().isNotEmpty) {
-              context.read<TodoProvider>().addTodo(value.trim());
-              Navigator.pop(context);
+              context.read<TodoProvider>().addTask(value.trim());
+              Navigator.of(context).pop();
             }
           },
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => Navigator.of(context).pop(),
             child: const Text('Cancel'),
           ),
           FilledButton(
             onPressed: () {
               if (controller.text.trim().isNotEmpty) {
-                context.read<TodoProvider>().addTodo(controller.text.trim());
-                Navigator.pop(context);
+                context.read<TodoProvider>().addTask(controller.text.trim());
+                Navigator.of(context).pop();
               }
             },
             child: const Text('Add'),
